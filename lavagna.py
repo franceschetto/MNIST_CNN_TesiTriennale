@@ -16,6 +16,12 @@ Il file contiene anche raccogli_cifre(), la lavagna per creare un dataset person
     images, labels, originali = raccogli_cifre(campioni_per_cifra=10)   # raccolta in memoria, parte sempre da zero
     salva_dataset(images, labels, originali, 'dataset_personale')        # scrive su disco sostituendo il dataset precedente
 
+Con raccogli_cifre(campioni_per_cifra=2, titolo=...) la stessa lavagna serve anche per la verifica della
+robustezza nel notebook 3.
+
+In tutte le lavagne il disegno 400x400 viene solo rimpicciolito a 28x28 (riduci_disegno), senza adattarlo a MNIST.
+La funzione di adattamento a MNIST (preprocess_drawing) resta nel file, non usata, per poterla rimettere.
+
 Nota: se si modifica questo file con il notebook già aperto, bisogna riavviare il kernel
 (oppure usare importlib.reload) perché le modifiche vengano lette.
 """
@@ -33,7 +39,7 @@ from matplotlib.patches import Patch
 from PIL import Image, ImageDraw, ImageTk
 
 # Colori delle reti nel grafico, nell'ordine in cui sono passate (stessi colori in barre, legenda e risultato)
-COLORI_RETI = ['#4472c4', '#ed7d31', '#70ad47', '#ffc000', '#7030a0', '#a5a5a5']
+COLORI_RETI = ['#4472c4', '#ed7d31', '#70ad47', '#ffc000', '#7030a0', '#a5a5a5', '#c00000', '#00b0f0']
 
 # --- FUNZIONI DI SUPPORTO PER GRAFICA ARROTONDATA ---
 def create_rounded_rect(canvas, x1, y1, x2, y2, radius=20, **kwargs):
@@ -76,10 +82,11 @@ class RoundedButton(tk.Canvas):
         self.command()
 
 
-# --- PRE-ELABORAZIONE DEL DISEGNO (stile MNIST) ---
+# --- PRE-ELABORAZIONE DEL DISEGNO IN STILE MNIST (al momento NON usata) ---
+# Conservata per poterla rimettere in futuro: per riattivarla basta usare preprocess_drawing(img_pil)
+# al posto di riduci_disegno(img_pil) nella lavagna desiderata.
 # Le cifre MNIST sono ritagliate, scalate in un riquadro 20x20 (proporzioni mantenute) e centrate
-# nel 28x28 usando il baricentro. Senza questo passaggio un disegno a tutta lavagna, decentrato,
-# viene riconosciuto peggio anche se la rete e' ottima.
+# nel 28x28 usando il baricentro.
 def shift_image(img, dy, dx):
     out = np.zeros_like(img)
     out[max(0, dy):min(28, 28 + dy), max(0, dx):min(28, 28 + dx)] = \
@@ -105,6 +112,15 @@ def preprocess_drawing(img_pil):
     cx = (img28.sum(axis=0) * np.arange(28)).sum() / total
     img28 = shift_image(img28, int(round(13.5 - cy)), int(round(13.5 - cx)))
     return np.clip(img28, 0, 255)
+
+
+# --- RIDUZIONE DEL DISEGNO (usata da tutte le lavagne) ---
+# Il disegno 400x400 viene solo rimpicciolito a 28x28, senza adattarlo a MNIST (niente ritaglio, riduzione a 20x20
+# o centratura): le cifre mantengono la posizione, la dimensione e lo spessore con cui sono state disegnate.
+def riduci_disegno(img_pil):
+    if img_pil.getbbox() is None:
+        return None                                   # lavagna vuota
+    return np.array(img_pil.resize((28, 28), Image.Resampling.LANCZOS), dtype=np.float32)
 
 
 # Probabilità Softmax (in %) che una rete assegna alle 10 cifre
@@ -168,9 +184,11 @@ def apri_lavagna(reti):
     # così anche i nomi lunghi restano leggibili. Lo spazio in basso viene riservato con tight_layout(rect=...).
     n_col_legenda = 1 if len(reti) == 1 else 2
     righe_legenda = -(-len(reti) // n_col_legenda)
-    margine_legenda = 0.04 + 0.05 * righe_legenda
+    # Con più di 6 reti (es. digitali + IMC) testi un po' più piccoli, così il grafico resta grande.
+    molte_reti = len(reti) > 6
+    margine_legenda = (0.03 + 0.04 * righe_legenda) if molte_reti else (0.04 + 0.05 * righe_legenda)
     fig.legend(handles=[Patch(facecolor=c, edgecolor='black', linewidth=0.5, label=n) for n, c in zip(nomi, colori)],
-               loc='lower center', ncol=n_col_legenda, frameon=False, fontsize=11)
+               loc='lower center', ncol=n_col_legenda, frameon=False, fontsize=9.5 if molte_reti else 11)
 
     def aggiorna_layout():
         fig.tight_layout(rect=(0, margine_legenda, 1, 1))
@@ -231,7 +249,7 @@ def apri_lavagna(reti):
         mostra_input(None)
 
     def predict():
-        img_small = preprocess_drawing(img_pil)
+        img_small = riduci_disegno(img_pil)
         mostra_input(img_small)
 
         if img_small is None:
@@ -267,7 +285,7 @@ def apri_lavagna(reti):
             if height > 0.5:
                 label = f'{height:.0f}%' if height >= 10 else f'{height:.1f}%'
                 ax.text(bar.get_x() + bar.get_width()/2, height + 1, label, va='bottom', ha='center',
-                        fontsize=8, rotation=90 if verticale else 0, color='black')
+                        fontsize=6.5 if molte_reti else 8, rotation=90 if verticale else 0, color='black')
 
         aggiorna_layout()
         canvas_matplot.draw()
@@ -283,8 +301,8 @@ def apri_lavagna(reti):
     btn_clr.pack(side=tk.LEFT, padx=10)
 
     # --- ANTEPRIMA DELL'INPUT DELLE RETI ---
-    # Mostra l'immagine 28x28 che le reti ricevono davvero (dopo ritaglio, ridimensionamento a 20x20 e
-    # centratura con padding), ingrandita 3 volte senza sfumature: ogni quadratino è un pixel MNIST.
+    # Mostra l'immagine 28x28 che le reti ricevono davvero (il disegno solo rimpicciolito),
+    # ingrandita 3 volte senza sfumature: ogni quadratino è un pixel dell'immagine 28x28.
     preview_frame = tk.Frame(btn_frame, bg='#e8e8e8')
     preview_frame.pack(side=tk.LEFT, padx=10)
     lbl_preview = tk.Label(preview_frame, bg='black', bd=0)
@@ -306,7 +324,7 @@ def apri_lavagna(reti):
 # ==========================================
 # RACCOLTA DI UN DATASET PERSONALE
 # ==========================================
-# Sottocartelle del dataset personale: le immagini 28x28 pronte per la rete (come MNIST) e i disegni
+# Sottocartelle del dataset personale: le immagini 28x28 pronte per la rete e i disegni
 # originali 400x400, conservati per poterli ri-elaborare in futuro se la pre-elaborazione cambia.
 CARTELLA_28 = '28x28'
 CARTELLA_ORIGINALI = 'originali'
@@ -327,7 +345,7 @@ def salva_dataset(images, labels, originali, cartella='dataset_personale'):
     """Scrive su disco il dataset raccolto, SOSTITUENDO quello salvato in precedenza nella cartella.
 
     Per ogni disegno vengono scritti due file PNG:
-      - <cartella>/28x28/cifra_<c>_<n>.png      immagine 28x28 pre-elaborata come MNIST
+      - <cartella>/28x28/cifra_<c>_<n>.png      disegno ridotto a 28x28 (senza adattamento MNIST)
       - <cartella>/originali/cifra_<c>_<n>.png  disegno originale 400x400
     """
     for sotto, imgs in ((CARTELLA_28, images), (CARTELLA_ORIGINALI, originali)):
@@ -343,8 +361,14 @@ def salva_dataset(images, labels, originali, cartella='dataset_personale'):
     print(f"Salvati {len(labels)} disegni nella cartella '{cartella}' (dataset precedente sostituito)")
 
 
-def raccogli_cifre(campioni_per_cifra=10):
-    """Apre una lavagna che chiede di disegnare le cifre da 0 a 9, pre-elaborando ogni disegno come MNIST.
+def raccogli_cifre(campioni_per_cifra=10, titolo="Dataset personale MNIST"):
+    """Apre una lavagna che chiede di disegnare le cifre da 0 a 9 e riduce ogni disegno a 28x28.
+
+    Il disegno non viene adattato allo stile MNIST (niente ritaglio, riduzione a 20x20 e centratura): viene
+    solo rimpicciolito con riduci_disegno(), così il dataset contiene cifre diverse da quelle di MNIST.
+    titolo è il titolo della finestra (nel notebook 3 la stessa lavagna serve per la verifica della robustezza).
+    Le cifre vengono chieste in ordine: la lavagna resta sulla stessa cifra finché non ne sono stati salvati
+    campioni_per_cifra disegni, poi passa alla successiva.
 
     La raccolta parte sempre da zero e i disegni restano in memoria: su disco non viene scritto nulla,
     quindi il dataset salvato in precedenza non viene toccato. Per salvarli si usa salva_dataset().
@@ -352,7 +376,7 @@ def raccogli_cifre(campioni_per_cifra=10):
     la raccolta in qualsiasi momento.
 
     Restituisce tre array numpy:
-      - images:    uint8 (N, 28, 28), le immagini pre-elaborate come MNIST
+      - images:    uint8 (N, 28, 28), i disegni ridotti a 28x28
       - labels:    int64 (N,), la cifra disegnata
       - originali: uint8 (N, 400, 400), i disegni originali
     """
@@ -366,17 +390,21 @@ def raccogli_cifre(campioni_per_cifra=10):
     img_pil = Image.new("L", (canvas_size, canvas_size), color=0)
     draw_mem = ImageDraw.Draw(img_pil)
 
-    # Prossima cifra da chiedere: quella con meno campioni, partendo dalla successiva all'ultima disegnata.
-    # Così le cifre vengono chieste a rotazione (0, 1, ..., 9, 0, 1, ...) e il dataset resta bilanciato.
-    def prossima_cifra(dopo):
-        ordine = [(dopo + 1 + k) % 10 for k in range(10)]
-        return min(ordine, key=lambda c: conteggi[c])
+    # Prossima cifra da chiedere: si resta sulla stessa cifra finché non ha campioni_per_cifra disegni,
+    # poi si passa alla successiva ancora incompleta (0, 0, ..., 1, 1, ..., 9). Quando tutte le cifre sono
+    # complete e si continua a disegnare, si passa a quella con meno disegni.
+    def prossima_cifra(attuale):
+        if conteggi[attuale] < campioni_per_cifra:
+            return attuale
+        ordine = [(attuale + 1 + k) % 10 for k in range(10)]
+        incomplete = [c for c in ordine if conteggi[c] < campioni_per_cifra]
+        return incomplete[0] if incomplete else min(ordine, key=lambda c: conteggi[c])
 
-    stato['cifra'] = prossima_cifra(-1)
+    stato['cifra'] = prossima_cifra(0)
 
     # --- CREAZIONE FINESTRA POP-UP ---
     root = tk.Tk()
-    root.title("Dataset personale MNIST")
+    root.title(titolo)
     root.geometry("1100x600")
     root.configure(bg='#e8e8e8')
     root.resizable(False, False)
@@ -405,7 +433,7 @@ def raccogli_cifre(campioni_per_cifra=10):
         lbl.bind("<Button-1>", lambda event, c=c: scegli_cifra(c))
         lbl_contatori.append(lbl)
 
-    tk.Label(left_frame, text="Ultimo disegno (come lo vedrà la rete, 28x28):",
+    tk.Label(left_frame, text="Ultimo disegno (28x28, come viene salvato nel dataset):",
              font=("Helvetica", 10), bg='#e8e8e8', fg='#555555').pack()
     lbl_ultimo = tk.Label(left_frame, bg='black', bd=0)
     lbl_ultimo.pack(pady=5)
@@ -467,7 +495,7 @@ def raccogli_cifre(campioni_per_cifra=10):
         aggiorna_interfaccia()
 
     def salva():
-        img_small = preprocess_drawing(img_pil)
+        img_small = riduci_disegno(img_pil)
         if stato['vuota'] or img_small is None:
             aggiorna_interfaccia("Errore: Lavagna vuota!", "#ff4d4d")
             return
